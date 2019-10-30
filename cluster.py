@@ -9,6 +9,9 @@ from sklearn.cluster import KMeans, MiniBatchKMeans
 import torch
 from transformers import *
 
+
+print('Load model.')
+
 # Transformers has a unified API
 # for 8 transformer architectures and 30 pretrained weights.
 #          Model          | Tokenizer          | Pretrained weights shortcut
@@ -62,6 +65,10 @@ model = model_class.from_pretrained(pretrained_weights,
 #all_hidden_states, all_attentions = model(input_ids)[-2:]
 
 
+# Read data.
+
+print('Read data.')
+
 def get_spans(tr):
     spans = {}
 
@@ -85,6 +92,25 @@ def get_spans(tr):
 
 dataset = []
 
+def flatten(lst):
+    def helper(lst):
+        if not isinstance(lst, (list, tuple)):
+            yield lst
+        else:
+            for x in lst:
+                for y in flatten(x):
+                    yield y
+    return [x for x in helper(lst)]
+
+def subword_offsets(subword_units):
+    res = []
+    sofar = 0
+    for x in subword_units:
+        size = len(x)
+        res.append((sofar, size))
+        sofar += size
+    return res
+
 with open('22.auto.clean') as f:
     for line in f:
         nltk_tree = nltk.Tree.fromstring(line)
@@ -92,9 +118,18 @@ with open('22.auto.clean') as f:
         rich_labeled_spans = get_spans(nltk_tree)
         labeled_spans = [(pos, size, labels[0]) for pos, size, labels in rich_labeled_spans]
         input_ids = tokenizer.encode(' '.join(tokens))
-        dataset.append(dict(labeled_spans=labeled_spans, tokens=tokens, input_ids=input_ids))
+        subword_units = [tokenizer.encode(x) for x in tokens]
+        subword_ids = flatten(subword_units)
+        offsets = subword_offsets(subword_units)
+        assert len(offsets) == len(tokens)
+        assert tuple(input_ids) == tuple(subword_ids)
+        dataset.append(dict(labeled_spans=labeled_spans, tokens=tokens, input_ids=input_ids, offsets=offsets))
 
-# Sort by token length.
+# Encode.
+
+print('Encode.')
+
+## Sort by token length.
 dataset = sorted(dataset, key=lambda x: len(x['input_ids']))
 
 max_batch_size = 32
@@ -139,12 +174,14 @@ for i, batch in enumerate(batch_iterator(dataset)):
     example_ids.append(batch_example_ids.view(-1))
 
 # Cluster.
+
+print('Cluster.')
+
 n_clusters = 25
 seed = 11
 
 X = np.concatenate(vectors, axis=0)
 algo = MiniBatchKMeans(n_clusters=n_clusters, random_state=seed, batch_size=1600)
-algo.fit(vectors)
 algo.fit(X)
 
 cluster_ids = algo.labels_
