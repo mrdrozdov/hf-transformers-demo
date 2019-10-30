@@ -3,6 +3,9 @@ import os
 import json
 import nltk
 
+import numpy as np
+from sklearn.cluster import KMeans, MiniBatchKMeans
+
 import torch
 from transformers import *
 
@@ -117,9 +120,32 @@ def batch_iterator(dataset):
     if len(batch) > 0:
         yield batch
 
-for batch in batch_iterator(dataset):
+layer_choice = -1
+example_ids = []
+vectors = []
+for i, batch in enumerate(batch_iterator(dataset)):
     input_ids = torch.tensor([x['input_ids'] for x in batch])
-    print(input_ids.shape)
-import ipdb; ipdb.set_trace()
-pass
+    batch_size, length = input_ids.shape
+
+    # Encode.
+    all_hidden_states, all_attentions = model(input_ids)[-2:]
+    h = all_hidden_states[layer_choice].view(batch_size*length, -1)
+    vectors.append(h.cpu().data.numpy())
+
+    # Save example ids.
+    batch_example_ids = torch.LongTensor(batch_size, length)
+    for j in range(batch_size):
+        batch_example_ids[j] = i * batch_size + j
+    example_ids.append(batch_example_ids.view(-1))
+
+# Cluster.
+n_clusters = 25
+seed = 11
+
+X = np.concatenate(vectors, axis=0)
+algo = MiniBatchKMeans(n_clusters=n_clusters, random_state=seed, batch_size=1600)
+algo.fit(vectors)
+algo.fit(X)
+
+cluster_ids = algo.labels_
 
